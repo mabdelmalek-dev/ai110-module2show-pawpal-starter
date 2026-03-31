@@ -123,6 +123,15 @@ class Owner:
 			all_tasks.extend(p.get_tasks())
 		return all_tasks
 
+	def get_tasks_filtered(self, pet_id: Optional[int] = None, active: Optional[bool] = None) -> List["Task"]:
+		"""Return tasks optionally filtered by pet id and active flag."""
+		tasks = self.get_all_tasks()
+		if pet_id is not None:
+			tasks = [t for t in tasks if t.pet_id == pet_id]
+		if active is not None:
+			tasks = [t for t in tasks if t.active == active]
+		return tasks
+
 
 @dataclass
 class Task:
@@ -186,6 +195,32 @@ class Task:
 	def to_instance(self, on_date: date) -> "TaskInstance":
 		"""Create a TaskInstance for the provided date using default fields."""
 		return TaskInstance(task_id=self.id, date=on_date)
+
+	def is_scheduled_on(self, on_date: date) -> bool:
+		"""Simple recurrence rule matcher. Supported rules:
+		- None / empty: always True
+		- 'daily'
+		- 'weekdays' (mon-fri)
+		- 'weekends' (sat-sun)
+		- comma-separated short day names like 'mon,tue'
+		"""
+		if not self.recurrence_rule:
+			return True
+		r = self.recurrence_rule.strip().lower()
+		if r == "daily":
+			return True
+		if r == "weekdays":
+			return on_date.weekday() < 5
+		if r == "weekends":
+			return on_date.weekday() >= 5
+		# allow patterns like 'mon,tue'
+		short_names = {0: "mon", 1: "tue", 2: "wed", 3: "thu", 4: "fri", 5: "sat", 6: "sun"}
+		parts = [p.strip() for p in r.split(",") if p.strip()]
+		if parts:
+			today = short_names[on_date.weekday()]
+			return today in parts
+		# unknown rule: default to False to avoid accidental scheduling
+		return False
 
 
 @dataclass
@@ -302,8 +337,8 @@ class Scheduler:
 			raise ValueError("Owner instance required in Scheduler.run_metadata['owner']")
 
 		schedule = DailySchedule(date=on_date, owner_id=owner.id)
-		# gather tasks
-		tasks = [t for t in owner.get_all_tasks() if t.active]
+		# gather tasks and respect recurrence rules
+		tasks = [t for t in owner.get_all_tasks() if t.active and t.is_scheduled_on(on_date)]
 		# dynamic greedy selection using scoring and 1-step lookahead
 		# initial sort is not strictly necessary but keeps ordering stable
 		tasks.sort(key=lambda x: (-x.priority, x.duration_minutes or 0))
@@ -367,6 +402,35 @@ class Scheduler:
 
 		return schedule
 
+	def detect_conflicts(self, schedule: DailySchedule) -> List[tuple]:
+		"""Detect simple conflicts in a schedule.
+
+		Conflicts detected:
+		- overlapping TaskInstances
+		- overlapping tasks that both require a walker
+		Returns list of (TaskInstance, TaskInstance, reason)
+		"""
+		conflicts = []
+		entries = schedule.get_today_tasks()
+		for i in range(len(entries)):
+			for j in range(i + 1, len(entries)):
+				a = entries[i]
+				b = entries[j]
+				# if either has no times, skip overlap detection
+				if not a.scheduled_start or not a.scheduled_end or not b.scheduled_start or not b.scheduled_end:
+					continue
+				# check overlap
+				if not (a.scheduled_end <= b.scheduled_start or b.scheduled_end <= a.scheduled_start):
+					# overlapping in time
+					reason = "time overlap"
+					# check for resource conflict: both require walker
+					task_a = next((t for t in self.run_metadata.get("owner").get_all_tasks() if t.id == a.task_id), None)
+					task_b = next((t for t in self.run_metadata.get("owner").get_all_tasks() if t.id == b.task_id), None)
+					if task_a and task_b and task_a.requires_walker and task_b.requires_walker:
+						reason = "walker conflict"
+					conflicts.append((a, b, reason))
+		return conflicts
+
 	def score_task_for_slot(self, task: Task, slot: Dict[str, datetime]) -> float:
 		"""Return a numeric score representing how well a task fits a slot.
 
@@ -403,7 +467,7 @@ class Scheduler:
 				es = datetime.combine(slot_start.date(), task.earliest_time)
 				le = datetime.combine(slot_start.date(), task.latest_time)
 				if slot_start >= es and slot_end <= le:
-				score += 1.0
+					score += 1.0
 			except Exception:
 				pass
 
@@ -457,7 +521,10 @@ class DailySchedule:
 
 	def get_today_tasks(self) -> List[TaskInstance]:
 		"""Return the list of scheduled TaskInstance objects for the day."""
-		return list(self.entries)
+		# return entries sorted by scheduled_start when possible
+		entries = list(self.entries)
+		entries.sort(key=lambda e: (e.scheduled_start or datetime.min))
+		return entries
 
 	def total_duration(self) -> int:
 		"""Return the total scheduled duration in minutes for this schedule."""
