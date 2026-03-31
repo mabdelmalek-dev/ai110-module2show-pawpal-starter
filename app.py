@@ -45,6 +45,28 @@ owner_name = st.text_input("Owner name", value="Jordan")
 pet_name = st.text_input("Pet name", value="Mochi")
 species = st.selectbox("Species", ["dog", "cat", "other"])
 
+# Session helpers
+def get_owner(name: str) -> Owner:
+    o = st.session_state.get("owner")
+    if not isinstance(o, Owner):
+        st.session_state["owner"] = Owner(name=name)
+    return st.session_state["owner"]
+
+
+def find_or_create_pet(owner: Owner, name: str, species: str) -> Pet:
+    for p in owner.pets:
+        if p.name == name:
+            return p
+    pet = Pet(name=name, species=species)
+    owner.add_pet(pet)
+    return pet
+
+# Add pet UI: call Owner.add_pet when user submits
+if st.button("Add pet"):
+    owner = get_owner(owner_name)
+    pet = find_or_create_pet(owner, pet_name, species)
+    st.success(f"Added pet: {pet.name}")
+
 st.markdown("### Tasks")
 st.caption("Add a few tasks. In your final version, these should feed into your scheduler.")
 
@@ -60,9 +82,16 @@ with col3:
     priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
 
 if st.button("Add task"):
-    st.session_state.tasks.append(
-        {"title": task_title, "duration_minutes": int(duration), "priority": priority}
-    )
+    owner = get_owner(owner_name)
+    pet = find_or_create_pet(owner, pet_name, species)
+    # create Task instance and attach to pet
+    pri_map = {"low": 1, "medium": 2, "high": 3}
+    next_id = max((t.id or 0 for t in owner.get_all_tasks()), default=0) + 1
+    task = Task(id=next_id, pet_id=pet.id, title=task_title, duration_minutes=int(duration), priority=pri_map.get(priority, 2))
+    pet.add_task(task)
+    # also keep UI-friendly task record in session_state for quick table view
+    st.session_state.tasks.append({"title": task_title, "duration_minutes": int(duration), "priority": priority})
+    st.success(f"Added task: {task_title} to {pet.name}")
 
 if st.session_state.tasks:
     st.write("Current tasks:")
