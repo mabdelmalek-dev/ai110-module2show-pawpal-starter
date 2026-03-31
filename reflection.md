@@ -74,7 +74,7 @@ a. Constraints and priorities
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
 - How did you decide which constraints mattered most?
 
-**a. Constraints and priorities**
+a. Constraints and priorities
 
 - Constraints the scheduler considers:
 	- **Owner availability window:** the owner's free time each day (earliest/latest times) — tasks must fit inside this window.
@@ -208,14 +208,14 @@ b. Confidence
 
 ## 5. Reflection
 
-**a. What went well**
+a. What went well
 
 - What part of this project are you most satisfied with?
 
-**b. What you would improve**
+b. What you would improve
 
 - If you had another iteration, what would you improve or redesign?
 
-**c. Key takeaway**
+c. Key takeaway
 
 - What is one important thing you learned about designing systems or working with AI on this project?
