@@ -47,15 +47,11 @@ pip install -r requirements.txt
 This project includes a lightweight scheduling engine with a few practical
 features to make daily planning useful and explainable:
 
-- Scoring-based greedy selection: tasks are scored by a small heuristic that
 	combines priority, recency (how recently a task was performed), duration,
 	and whether a candidate time fits the task's earliest/latest constraints.
-- One-step lookahead: when choosing the next task for a time window the
 	scheduler briefly considers the best immediate follow-up to avoid locally
 	poor choices.
-- Sorting & filtering helpers: utilities to present schedule entries by start
 	time and to filter tasks by pet name and completion state.
-- Lightweight conflict detection: the scheduler detects overlapping entries
 	and reports warnings (same-pet overlap, walker conflicts, or generic time
 	overlaps) instead of raising exceptions so the UI can surface warnings to
 	the user and allow manual resolution.
@@ -63,3 +59,22 @@ features to make daily planning useful and explainable:
 These choices favor clarity, speed, and explainability over perfect
 optimality. The code is structured so the heuristic can be replaced with a
 solver-backed approach for larger or more constrained cases.
+
+## Testing PawPal+
+
+Run the full automated test suite with:
+
+```bash
+python -m pytest
+```
+
+What the tests cover:
+
+- Sorting correctness: verifies schedule entries are returned in chronological order and handles mixed `datetime`, `time`, and `HH:MM` string representations.
+- Recurrence logic: verifies that marking a `daily` task done produces the next `TaskInstance` for the following day.
+- Conflict detection: ensures overlapping task instances are detected and reported as warnings (same-pet overlaps, walker/resource conflicts, generic time overlaps).
+- Integration scenarios: basic end-to-end checks for scheduling, filtering, and ordering behavior.
+
+Confidence Level: ★★★★☆ (4/5)
+
+Reason: the test suite covers the most common scheduling behaviors and edge cases relevant to the module (sorting, daily recurrence, and simple conflict detection). Further tests for DST transitions, complex recurrence patterns, and larger-scale performance would increase confidence to 5/5.
