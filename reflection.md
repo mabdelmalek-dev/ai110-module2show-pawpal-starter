@@ -210,19 +210,6 @@ b. Confidence
 
 a. What went well
 
-- What part of this project are you most satisfied with?
-
-b. What you would improve
-
-- If you had another iteration, what would you improve or redesign?
-
-c. Key takeaway
-
-- What is one important thing you learned about designing systems or working with AI on this project?
-## 5. Reflection
-
-a. What went well
-
 - Implemented a clear, test-covered scheduler and integrated it with a simple Streamlit UI.
 
 b. What you would improve
