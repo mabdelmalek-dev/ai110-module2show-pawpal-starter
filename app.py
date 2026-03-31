@@ -1,4 +1,6 @@
 import streamlit as st
+from pawpal_system import Owner, Pet, Task, TaskInstance, Scheduler
+from datetime import date, time
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -74,15 +76,65 @@ st.subheader("Build Schedule")
 st.caption("This button should call your scheduling logic once you implement it.")
 
 if st.button("Generate schedule"):
-    st.warning(
-        "Not implemented yet. Next step: create your scheduling logic (classes/functions) and call it here."
-    )
-    st.markdown(
-        """
-Suggested approach:
-1. Design your UML (draft).
-2. Create class stubs (no logic).
-3. Implement scheduling behavior.
-4. Connect your scheduler here and display results.
-"""
-    )
+    # Persist or retrieve Owner in session_state
+    def get_owner(name: str) -> Owner:
+        o = st.session_state.get("owner")
+        if not isinstance(o, Owner):
+            st.session_state["owner"] = Owner(name=name)
+        return st.session_state["owner"]
+
+    owner = get_owner(owner_name)
+
+    # Ensure a Pet exists for the owner
+    def find_or_create_pet(owner: Owner, name: str, species: str) -> Pet:
+        for p in owner.pets:
+            if p.name == name:
+                return p
+        pet = Pet(name=name, species=species)
+        owner.add_pet(pet)
+        return pet
+
+    pet = find_or_create_pet(owner, pet_name, species)
+
+    # Map UI tasks into Task objects attached to the pet
+    pri_map = {"low": 1, "medium": 2, "high": 3}
+    ui_tasks = st.session_state.get("tasks", [])
+    next_id = max((t.id or 0 for t in owner.get_all_tasks()), default=0) + 1
+    for t in ui_tasks:
+        exists = any((tt.title == t.get("title") and tt.duration_minutes == int(t.get("duration_minutes", 0))) for tt in pet.get_tasks())
+        if exists:
+            continue
+        task = Task(id=next_id, pet_id=pet.id, title=t.get("title", ""), duration_minutes=int(t.get("duration_minutes", 0)), priority=pri_map.get(t.get("priority", "medium"), 2))
+        pet.add_task(task)
+        next_id += 1
+
+    # Provide a default availability window if none set
+    if not owner.availability:
+        owner.set_availability([{"start": time(8, 0), "end": time(20, 0)}])
+
+    # Run scheduler
+    sched = Scheduler(date=date.today())
+    sched.run_metadata["owner"] = owner
+    try:
+        plan = sched.generate_plan()
+    except Exception as e:
+        st.error(f"Scheduling failed: {e}")
+        plan = None
+
+    if plan:
+        st.success("Schedule generated")
+        st.markdown(plan.summarize())
+        id_to_title = {t.id: t.title for t in owner.get_all_tasks()}
+        rows = []
+        for e in plan.get_today_tasks():
+            rows.append({
+                "task_id": e.task_id,
+                "title": id_to_title.get(e.task_id, "(unknown)"),
+                "start": e.scheduled_start,
+                "end": e.scheduled_end,
+                "status": e.status,
+            })
+        if rows:
+            st.table(rows)
+        else:
+            st.info("No tasks fit into availability for today.")
