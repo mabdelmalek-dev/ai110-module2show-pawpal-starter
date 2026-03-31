@@ -75,7 +75,7 @@ solver-backed approach for larger or more constrained cases.
 
 To embed a screenshot of the final Streamlit app, add the image to your course images folder and use the following Markdown snippet in this README (replace `your_screenshot_name.png`):
 
-<a href="/course_images/ai110/ScreenShot.png" target="_blank"><img src='/course_images/ai110/ScreenShot.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
+<a href="/course_images/ScreenShot.png" target="_blank"><img src='/course_images/ScreenShot.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
 
 Note: add your actual Streamlit screenshot to `course_images/ai110/ScreenShot.png` (or update the paths above to match your filename). If you'd like, upload the image here and I can add it to the repository for you.
 
