@@ -1,0 +1,99 @@
+%% Mermaid class diagram for PawPal+ (reflects pawpal_system.py)
+classDiagram
+
+    class Owner {
+        +int id
+        +str name
+        +list pets
+        +set_availability(windows)
+        +add_pet(pet)
+        +get_all_tasks()
+        +filter_tasks(pet_name, completed)
+    }
+
+    class Pet {
+        +int id
+        +str name
+        +str species
+        +list tasks
+        +add_task(task)
+        +get_tasks()
+    }
+
+    class Task {
+        +int id
+        +int pet_id
+        +str title
+        +int duration_minutes
+        +int priority
+        +str recurrence_rule
+        +datetime last_performed
+        +mark_done(date_or_instance)
+        +next_occurrence(after_date)
+        +is_scheduled_on(on_date)
+    }
+
+    class TaskInstance {
+        +int id
+        +int task_id
+        +date date
+        +datetime scheduled_start
+        +datetime scheduled_end
+        +str status
+        +mark_done(actual_start, actual_end)
+        +complete(owner)
+    }
+
+    class Scheduler {
+        +date date
+        +list task_pool
+        +generate_plan()
+        +score_task_for_slot(task, slot)
+        +detect_conflicts(schedule)
+        +sort_by_time(items, time_attr)
+    }
+
+    class DailySchedule {
+        +date date
+        +list entries
+        +add_entry(task_instance)
+        +get_today_tasks()
+        +summarize()
+    }
+
+    class Constraints {
+        +int id
+        +max_daily_duration
+        +preferred_time_windows
+    }
+
+    class Notification {
+        +int id
+        +task_instance_id
+        +send_time
+    }
+
+    class Explanation {
+        +int id
+        +schedule_id
+        +entries
+    }
+
+    class Storage {
+        +backend_type
+        +load_pets()
+        +save_task(task)
+    }
+
+    %% Relationships
+    Owner "1" -- "*" Pet : owns
+    Pet "1" -- "*" Task : has
+    Task "1" -- "*" TaskInstance : instances
+    Scheduler o-- DailySchedule : produces
+    DailySchedule "1" o-- "*" TaskInstance : entries
+    Scheduler ..> Owner : uses
+    Scheduler ..> Constraints : consults
+    Notification ..> TaskInstance : for
+    Explanation ..> DailySchedule : explains
+
+%% End
