@@ -79,6 +79,18 @@ Why: without a dedicated `Scheduler` the planning logic tends to drift into UI c
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
 
+One tradeoff the current scheduler makes is using a fast greedy selection with a tiny (one-step) lookahead instead of solving a global optimization (for example, an integer linear program) that would guarantee an optimal ordering.
+
+- **Tradeoff:** Greedy + 1-step lookahead vs. global optimal planning.
+
+- **Implication:** The greedy approach is much faster and easier to reason about and test, and it keeps the code simple and interactive for a UI-driven workflow. However, it can miss globally optimal schedules — particularly in edge cases where a lower-priority short task should be deferred to make room for a later high-value task whose placement depends on the first decision.
+
+- **Why this is reasonable:** For a consumer-facing pet-care helper the task set per day is typically small (a handful of tasks), and responsiveness and explainability matter: owners expect quick results and clear reasoning. The greedy heuristic produces useful schedules quickly and lets us expose simple, human-understandable scoring rules (priority, recency, duration, time-window fit). When stronger guarantees are required, the codebase is structured so a future ILP/CP solver can be added as an optional backend for harder cases.
+
+Decision about a code simplification suggestion:
+
+I reviewed a possible simplification of `score_task_for_slot()` that an AI suggested: condensing the scoring logic into shorter, more "Pythonic" expressions (e.g., single-line computations, more compact recency math, and chained ternaries). While those changes would reduce LOC, they would also make the scoring function harder for future readers (students and maintainers) to inspect and tune. Because the scoring weights are intentionally simple and expected to be tuned by hand, I decided to keep the more explicit, step-by-step implementation — it trades a bit of conciseness for clarity and easier manual tuning.
+
 ---
 
 ## 3. AI Collaboration

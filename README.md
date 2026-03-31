@@ -41,3 +41,25 @@ pip install -r requirements.txt
 5. Add tests to verify key behaviors.
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
+
+## Smarter Scheduling
+
+This project includes a lightweight scheduling engine with a few practical
+features to make daily planning useful and explainable:
+
+- Scoring-based greedy selection: tasks are scored by a small heuristic that
+	combines priority, recency (how recently a task was performed), duration,
+	and whether a candidate time fits the task's earliest/latest constraints.
+- One-step lookahead: when choosing the next task for a time window the
+	scheduler briefly considers the best immediate follow-up to avoid locally
+	poor choices.
+- Sorting & filtering helpers: utilities to present schedule entries by start
+	time and to filter tasks by pet name and completion state.
+- Lightweight conflict detection: the scheduler detects overlapping entries
+	and reports warnings (same-pet overlap, walker conflicts, or generic time
+	overlaps) instead of raising exceptions so the UI can surface warnings to
+	the user and allow manual resolution.
+
+These choices favor clarity, speed, and explainability over perfect
+optimality. The code is structured so the heuristic can be replaced with a
+solver-backed approach for larger or more constrained cases.

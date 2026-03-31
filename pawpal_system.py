@@ -199,9 +199,79 @@ class Task:
 		self.updated_at = datetime.now(timezone.utc)
 
 	def mark_done(self, date_or_instance_id: Optional[Any] = None) -> None:
-		"""Record that the task was performed now (updates last_performed)."""
-		self.last_performed = datetime.now(timezone.utc)
+		"""Record that the task was performed.
+
+		If `date_or_instance_id` is a `datetime` or `date` it will be used as
+		the performed timestamp; otherwise now (UTC) is used. If the task has a
+		recurrence rule, returns a new `TaskInstance` for the next occurrence
+		(so callers can persist or schedule it). Otherwise returns `None`.
+		"""
+		# determine performed datetime
+		performed: datetime
+		if isinstance(date_or_instance_id, datetime):
+			performed = date_or_instance_id
+		elif isinstance(date_or_instance_id, date):
+			performed = datetime.combine(date_or_instance_id, time.min).replace(tzinfo=timezone.utc)
+		else:
+			performed = datetime.now(timezone.utc)
+
+		self.last_performed = performed
 		self.updated_at = datetime.now(timezone.utc)
+
+		# if this task is recurring, create a TaskInstance for the next occurrence
+		next_date = self.next_occurrence(performed.date())
+		if next_date:
+			return self.to_instance(next_date)
+		return None
+
+	def next_occurrence(self, after_date: date) -> Optional[date]:
+		"""Compute the next occurrence date after `after_date` according to `recurrence_rule`.
+
+		Supported rules:
+		- None/empty: no next occurrence
+		- 'daily'
+		- 'weekly'
+		- 'weekdays' (next weekday)
+		- 'weekends' (next weekend day)
+		- comma-separated short day names like 'mon,tue'
+		"""
+		if not self.recurrence_rule:
+			return None
+		r = self.recurrence_rule.strip().lower()
+		if r == "daily":
+			return after_date + timedelta(days=1)
+		if r == "weekly":
+			return after_date + timedelta(weeks=1)
+		if r == "weekdays":
+			# next day that is Monday-Friday
+			next_d = after_date + timedelta(days=1)
+			while next_d.weekday() >= 5:
+				next_d += timedelta(days=1)
+			return next_d
+		if r == "weekends":
+			next_d = after_date + timedelta(days=1)
+			while next_d.weekday() < 5:
+				next_d += timedelta(days=1)
+			return next_d
+		# patterns like 'mon,tue'
+		parts = [p.strip() for p in r.split(",") if p.strip()]
+		if parts:
+			name_to_idx = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+			wanted = []
+			for p in parts:
+				k = p[:3]
+				if k in name_to_idx:
+					wanted.append(name_to_idx[k])
+			if not wanted:
+				return None
+			# find the next date whose weekday is in wanted
+			next_d = after_date + timedelta(days=1)
+			for _ in range(1, 14):
+				if next_d.weekday() in wanted:
+					return next_d
+				next_d += timedelta(days=1)
+			return None
+
 
 	def conflicts_with(self, other: "Task") -> bool:
 		"""Quick check for conflicts between two tasks (heuristic)."""
@@ -271,6 +341,23 @@ class TaskInstance:
 		if actual_end:
 			self.actual_end = actual_end
 		self.updated_at = datetime.now(timezone.utc)
+
+	def complete(self, owner: Optional[Owner] = None) -> Optional["TaskInstance"]:
+		"""Mark this instance done and, if `owner` provided, trigger the
+		Task's recurrence handling so a next TaskInstance is created.
+
+		Returns the next `TaskInstance` if one was created, otherwise `None`.
+		"""
+		# mark this instance as done (record actual times if none provided)
+		self.mark_done()
+		if owner is None:
+			return None
+		# find the Task object and call its mark_done to create next occurrence
+		task = next((t for t in owner.get_all_tasks() if t.id == self.task_id), None)
+		if not task:
+			return None
+		# call Task.mark_done with the instance date to ensure next occurrence
+		return task.mark_done(self.date)
 
 	def postpone(self, new_start: datetime) -> None:
 		"""Postpone the scheduled start to a new datetime, keeping duration."""
@@ -443,16 +530,94 @@ class Scheduler:
 				# if either has no times, skip overlap detection
 				if not a.scheduled_start or not a.scheduled_end or not b.scheduled_start or not b.scheduled_end:
 					continue
-				# check overlap
-				if not (a.scheduled_end <= b.scheduled_start or b.scheduled_end <= a.scheduled_start):
+				# normalize times to numeric timestamps to avoid comparing naive/aware datetimes
+				def _to_ts(val):
+					if val is None:
+						return None
+					if isinstance(val, datetime):
+						v = val
+						if v.tzinfo is None:
+							v = v.replace(tzinfo=timezone.utc)
+						return v.timestamp()
+					if isinstance(val, time):
+						dt = datetime.combine(date.today(), val)
+						if dt.tzinfo is None:
+							dt = dt.replace(tzinfo=timezone.utc)
+						return dt.timestamp()
+					try:
+						return float(val)
+					except Exception:
+						return None
+
+				start_a = _to_ts(a.scheduled_start)
+				end_a = _to_ts(a.scheduled_end)
+				start_b = _to_ts(b.scheduled_start)
+				end_b = _to_ts(b.scheduled_end)
+				if start_a is None or end_a is None or start_b is None or end_b is None:
+					continue
+				if not (end_a <= start_b or end_b <= start_a):
 					# overlapping in time
-					reason = "time overlap"
-					# check for resource conflict: both require walker
-					task_a = next((t for t in self.run_metadata.get("owner").get_all_tasks() if t.id == a.task_id), None)
-					task_b = next((t for t in self.run_metadata.get("owner").get_all_tasks() if t.id == b.task_id), None)
-					if task_a and task_b and task_a.requires_walker and task_b.requires_walker:
+					task_a = None
+					task_b = None
+					owner = self.run_metadata.get("owner")
+					if owner:
+						task_a = next((t for t in owner.get_all_tasks() if t.id == a.task_id), None)
+						task_b = next((t for t in owner.get_all_tasks() if t.id == b.task_id), None)
+					# prioritize same-pet overlap, then walker conflict, otherwise generic time overlap
+					if task_a and task_b and task_a.pet_id == task_b.pet_id:
+						reason = "same-pet overlap"
+					elif task_a and task_b and task_a.requires_walker and task_b.requires_walker:
 						reason = "walker conflict"
+					else:
+						reason = "time overlap"
 					conflicts.append((a, b, reason))
+
+		return conflicts
+
+	def score_task_for_slot(self, task: Task, slot: Dict[str, datetime]) -> float:
+		"""Compute a heuristic score for placing `task` into `slot`.
+
+		This function combines task priority, recency (when it was last
+		performed), a small duration penalty, and a bonus when the slot fully
+		lies inside the task's allowed earliest/latest window. Higher scores mean
+		the task is a better fit for the given time slot. The scheduler uses
+		these scores to choose tasks greedily.
+
+		Parameters
+		- task: the `Task` being considered
+		- slot: mapping with `start` and `end` datetimes for the candidate slot
+
+		Returns
+		A floating-point score (larger is better).
+		"""
+		score = 0.0
+		# priority weight (normalized)
+		priority_weight = 1.0
+		score += priority_weight * float(task.priority or 0)
+
+		# recency: prefer tasks that haven't been performed recently
+		if task.last_performed:
+			delta_days = (datetime.now(timezone.utc) - task.last_performed).total_seconds() / 86400.0
+			recency_score = 1.0 / (1.0 + delta_days)
+		else:
+			# never performed gets a moderate bonus
+			recency_score = 1.0
+		score += 2.0 * recency_score
+
+		# duration penalty: prefer shorter tasks (small negative contribution)
+		if task.duration_minutes:
+			score -= 0.01 * float(task.duration_minutes)
+
+		# time-window fit: small bonus if slot is fully within earliest/latest
+		slot_start = slot.get("start")
+		slot_end = slot.get("end")
+		if slot_start and slot_end and task.earliest_time and task.latest_time:
+			es = datetime.combine(slot_start.date(), task.earliest_time)
+			le = datetime.combine(slot_start.date(), task.latest_time)
+			if slot_start >= es and slot_end <= le:
+				score += 1.0
+
+		return float(score)
 		return conflicts
 
 	def score_task_for_slot(self, task: Task, slot: Dict[str, datetime]) -> float:
@@ -487,18 +652,11 @@ class Scheduler:
 		slot_end = slot.get("end")
 		if slot_start and slot_end and task.earliest_time and task.latest_time:
 			# convert to today's datetimes for comparison
-			try:
-				es = datetime.combine(slot_start.date(), task.earliest_time)
-				le = datetime.combine(slot_start.date(), task.latest_time)
-				if slot_start >= es and slot_end <= le:
-					score += 1.0
-			except Exception:
-				pass
-
-		# small penalty for requires_walker (resource constraint) to be resolved elsewhere
-		if task.requires_walker:
-			score -= 0.5
-
+			es = datetime.combine(slot_start.date(), task.earliest_time)
+			le = datetime.combine(slot_start.date(), task.latest_time)
+			# if the slot lies fully within the task's allowed window, give a small bonus
+			if slot_start >= es and slot_end <= le:
+				score += 1.0
 		return float(score)
 
 	def sort_by_time(self, items: List[Any], time_attr: str = "scheduled_start") -> List[Any]:
@@ -510,31 +668,47 @@ class Scheduler:
 		Supports values that are `datetime`, `time`, or strings in `HH:MM` format.
 		"""
 
-		def to_dt(val):
+		# convert various time-like values into a numeric timestamp for robust sorting
+		def to_ts(val):
 			if val is None:
-				return datetime.min
+				return float("-inf")
 			if isinstance(val, datetime):
-				return val
+				v = val
+				if v.tzinfo is None:
+					v = v.replace(tzinfo=timezone.utc)
+				return v.timestamp()
 			if isinstance(val, time):
-				return datetime.combine(date.today(), val)
+				dt = datetime.combine(date.today(), val)
+				if dt.tzinfo is None:
+					dt = dt.replace(tzinfo=timezone.utc)
+				return dt.timestamp()
 			if isinstance(val, str):
-				# try HH:MM or HH:MM:SS
 				for fmt in ("%H:%M", "%H:%M:%S"):
 					try:
 						t = datetime.strptime(val, fmt).time()
-						return datetime.combine(date.today(), t)
+						dt = datetime.combine(date.today(), t).replace(tzinfo=timezone.utc)
+						return dt.timestamp()
 					except Exception:
 						continue
-			# fallback
-			return datetime.min
+			try:
+				return float(val)
+			except Exception:
+				return float("-inf")
 
 		def extract(item):
-			# dict-like
 			if isinstance(item, dict):
 				val = item.get(time_attr)
 			else:
 				val = getattr(item, time_attr, None)
-			return to_dt(val)
+			return to_ts(val)
+
+		"""Sort helper that returns items ordered by the `time_attr` value.
+
+		This method normalizes `datetime`, `time`, and `HH:MM` strings to
+		numeric timestamps (UTC) before sorting to avoid naive vs aware
+		comparison errors. It returns a new list; the original `items` is not
+		modified.
+		"""
 
 		return sorted(list(items), key=extract)
 
@@ -584,7 +758,33 @@ class DailySchedule:
 		"""Return the list of scheduled TaskInstance objects for the day."""
 		# return entries sorted by scheduled_start when possible
 		entries = list(self.entries)
-		entries.sort(key=lambda e: (e.scheduled_start or datetime.min))
+		# robust sort key that handles datetime (aware/naive), time, or missing values
+		def _start_key(e: TaskInstance):
+			s = e.scheduled_start
+			if s is None:
+				return float("-inf")
+			if isinstance(s, datetime):
+				if s.tzinfo is None:
+					s = s.replace(tzinfo=timezone.utc)
+				return s.timestamp()
+			if isinstance(s, time):
+				dt = datetime.combine(date.today(), s)
+				if dt.tzinfo is None:
+					dt = dt.replace(tzinfo=timezone.utc)
+				return dt.timestamp()
+			# fallback
+			try:
+				return float(s)
+			except Exception:
+				return float("-inf")
+		entries.sort(key=_start_key)
+
+		"""Notes
+
+		- Sorting is robust to various datetime representations (naive or
+		  timezone-aware) by converting values to timestamps.
+		- Returns a new list sorted by scheduled start time.
+		"""
 		return entries
 
 	def total_duration(self) -> int:
