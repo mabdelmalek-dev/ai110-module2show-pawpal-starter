@@ -60,6 +60,24 @@ These choices favor clarity, speed, and explainability over perfect
 optimality. The code is structured so the heuristic can be replaced with a
 solver-backed approach for larger or more constrained cases.
 
+## Features
+
+- **Sorting by time:** `Scheduler.sort_by_time()` and `DailySchedule.get_today_tasks()` ensure schedule entries are presented in chronological order and handle mixed `datetime`, `time`, and `HH:MM` string formats.
+- **Conflict warnings:** `Scheduler.detect_conflicts()` finds overlapping TaskInstances and reports lightweight warnings (`same-pet overlap`, `walker conflict`, `time overlap`) so the UI can surface actionable messages instead of crashing.
+- **Daily recurrence:** `Task.next_occurrence()` and `Task.mark_done()` automatically compute and (optionally) create the next `TaskInstance` for recurring tasks like `daily`, `weekly`, `weekdays`, and custom day lists.
+- **Scoring-based greedy planner:** `Scheduler.score_task_for_slot()` assigns a heuristic score combining priority, recency, duration penalty, and time-window fit; `Scheduler.generate_plan()` uses a greedy selection with a one-step lookahead.
+- **Sorting & filtering helpers:** Owner and scheduler utilities to filter tasks by pet name or completion and to present sorted schedules in the UI.
+- **TaskInstance lifecycle helpers:** `TaskInstance.postpone()`, `cancel()`, `mark_done()` and `complete(owner)` help manage scheduled instances and trigger recurrence when appropriate.
+- **Robust datetime handling:** The scheduler normalizes naive and timezone-aware datetimes to avoid comparison errors and correctly handle scheduling logic.
+- **Automated tests:** Pytest suite covers sorting, recurrence, and conflict detection (see `tests/test_scheduler.py`).
+
+## 📸 Demo
+
+To embed a screenshot of the final Streamlit app, add the image to your course images folder and use the following Markdown snippet in this README (replace `your_screenshot_name.png`):
+
+<a href="/course_images/ai110/your_screenshot_name.png" target="_blank"><img src='/course_images/ai110/your_screenshot_name.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
+
+
 ## Testing PawPal+
 
 Run the full automated test suite with:
