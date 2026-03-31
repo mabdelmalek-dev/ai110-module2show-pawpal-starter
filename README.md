@@ -62,14 +62,14 @@ solver-backed approach for larger or more constrained cases.
 
 ## Features
 
-- **Sorting by time:** `Scheduler.sort_by_time()` and `DailySchedule.get_today_tasks()` ensure schedule entries are presented in chronological order and handle mixed `datetime`, `time`, and `HH:MM` string formats.
-- **Conflict warnings:** `Scheduler.detect_conflicts()` finds overlapping TaskInstances and reports lightweight warnings (`same-pet overlap`, `walker conflict`, `time overlap`) so the UI can surface actionable messages instead of crashing.
-- **Daily recurrence:** `Task.next_occurrence()` and `Task.mark_done()` automatically compute and (optionally) create the next `TaskInstance` for recurring tasks like `daily`, `weekly`, `weekdays`, and custom day lists.
-- **Scoring-based greedy planner:** `Scheduler.score_task_for_slot()` assigns a heuristic score combining priority, recency, duration penalty, and time-window fit; `Scheduler.generate_plan()` uses a greedy selection with a one-step lookahead.
-- **Sorting & filtering helpers:** Owner and scheduler utilities to filter tasks by pet name or completion and to present sorted schedules in the UI.
-- **TaskInstance lifecycle helpers:** `TaskInstance.postpone()`, `cancel()`, `mark_done()` and `complete(owner)` help manage scheduled instances and trigger recurrence when appropriate.
-- **Robust datetime handling:** The scheduler normalizes naive and timezone-aware datetimes to avoid comparison errors and correctly handle scheduling logic.
-- **Automated tests:** Pytest suite covers sorting, recurrence, and conflict detection (see `tests/test_scheduler.py`).
+- Sorting by time: `Scheduler.sort_by_time()` and `DailySchedule.get_today_tasks()` ensure schedule entries are presented in chronological order and handle mixed `datetime`, `time`, and `HH:MM` string formats.
+- Conflict warnings: `Scheduler.detect_conflicts()` finds overlapping TaskInstances and reports lightweight warnings (`same-pet overlap`, `walker conflict`, `time overlap`) so the UI can surface actionable messages instead of crashing.
+- Daily recurrence: `Task.next_occurrence()` and `Task.mark_done()` automatically compute and (optionally) create the next `TaskInstance` for recurring tasks like `daily`, `weekly`, `weekdays`, and custom day lists.
+- Scoring-based greedy planner: `Scheduler.score_task_for_slot()` assigns a heuristic score combining priority, recency, duration penalty, and time-window fit; `Scheduler.generate_plan()` uses a greedy selection with a one-step lookahead.
+- Sorting & filtering helpers: Owner and scheduler utilities to filter tasks by pet name or completion and to present sorted schedules in the UI.
+- TaskInstance lifecycle helpers:`TaskInstance.postpone()`, `cancel()`, `mark_done()` and `complete(owner)` help manage scheduled instances and trigger recurrence when appropriate.
+- Robust datetime handling: The scheduler normalizes naive and timezone-aware datetimes to avoid comparison errors and correctly handle scheduling logic.
+- Automated tests: Pytest suite covers sorting, recurrence, and conflict detection (see `tests/test_scheduler.py`).
 
 ## 📸 Demo
 
@@ -78,6 +78,16 @@ To embed a screenshot of the final Streamlit app, add the image to your course i
 <a href="/course_images/ScreenShot.png" target="_blank"><img src='/course_images/ScreenShot.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
 
 Note: add your actual Streamlit screenshot to `course_images/ai110/ScreenShot.png` (or update the paths above to match your filename). If you'd like, upload the image here and I can add it to the repository for you.
+
+## Agent Mode Challeng 1
+
+Agent Mode was used throughout development to accelerate scaffolding, tests, and iterative implementation. In practice Agent Mode helped with:
+
+- Drafting dataclass scaffolds and method stubs for the domain model.
+- Generating unit-test templates for recurrence, sorting, and conflict detection.
+- Suggesting small helpers and refactors (datetime normalizers, sort helpers).
+
+All AI-generated suggestions were reviewed, adjusted for clarity, and validated with unit tests and the running Streamlit UI before committing.
 
 
 ## Testing PawPal+

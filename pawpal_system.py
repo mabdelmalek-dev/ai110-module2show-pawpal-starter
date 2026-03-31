@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, date, time, timedelta, timezone
 from typing import List, Dict, Optional, Any
+import json
+import os
+import shutil
+from datetime import datetime as _dt
 
 
 @dataclass
@@ -156,6 +160,181 @@ class Owner:
 
 		return tasks
 
+	# --- Persistence helpers (JSON) ---------------------------------
+
+	def to_dict(self) -> Dict[str, Any]:
+		"""Serialize owner, pets and tasks to a JSON-serializable mapping."""
+		def _dt(o):
+			if o is None:
+				return None
+			if isinstance(o, datetime):
+				return o.isoformat()
+			return str(o)
+
+		def _time_to_str(t: Optional[time]):
+			if t is None:
+				return None
+			return t.strftime("%H:%M:%S")
+
+		owner = {
+			"id": self.id,
+			"name": self.name,
+			"email": self.email,
+			"phone": self.phone,
+			"timezone": self.timezone,
+			"availability": [
+				{"start": _time_to_str(w.get("start")), "end": _time_to_str(w.get("end"))} for w in self.availability
+			],
+			"preferences": self.preferences,
+			"emergency_contact": self.emergency_contact,
+			"notification_settings": self.notification_settings,
+			"created_at": _dt(self.created_at),
+			"updated_at": _dt(self.updated_at),
+			"pets": [],
+		}
+
+		for p in self.pets:
+			pet = {
+				"id": p.id,
+				"name": p.name,
+				"species": p.species,
+				"breed": p.breed,
+				"sex": p.sex,
+				"age": p.age,
+				"photo_url": p.photo_url,
+				"notes": p.notes,
+				"owner_id": p.owner_id,
+				"default_routines": p.default_routines,
+				"medical_needs": p.medical_needs,
+				"created_at": _dt(p.created_at),
+				"updated_at": _dt(p.updated_at),
+				"tasks": [],
+			}
+			for t in p.tasks:
+				task = {
+					"id": t.id,
+					"pet_id": t.pet_id,
+					"title": t.title,
+					"type": t.type,
+					"duration_minutes": t.duration_minutes,
+					"priority": t.priority,
+					"priority_level": getattr(t, "priority_level", "medium"),
+					"recurrence_rule": t.recurrence_rule,
+					"earliest_time": t.earliest_time.strftime("%H:%M:%S") if t.earliest_time else None,
+					"latest_time": t.latest_time.strftime("%H:%M:%S") if t.latest_time else None,
+					"requires_walker": t.requires_walker,
+					"notes": t.notes,
+					"estimated_effort": t.estimated_effort,
+					"last_performed": t.last_performed.isoformat() if t.last_performed else None,
+					"active": t.active,
+					"created_at": _dt(t.created_at),
+					"updated_at": _dt(t.updated_at),
+				}
+				pet["tasks"].append(task)
+			owner["pets"].append(pet)
+
+		return owner
+
+	@classmethod
+	def from_dict(cls, data: Dict[str, Any]) -> "Owner":
+		"""Create an Owner instance (with Pet and Task children) from a mapping produced by `to_dict`."""
+		def _parse_time(s: Optional[str]) -> Optional[time]:
+			if s is None:
+				return None
+			try:
+				return datetime.strptime(s, "%H:%M:%S").time()
+			except Exception:
+				return None
+
+		def _parse_dt(s: Optional[str]) -> Optional[datetime]:
+			if s is None:
+				return None
+			try:
+				# fromisoformat handles timezone if present
+				return datetime.fromisoformat(s)
+			except Exception:
+				return None
+
+		o = cls()
+		o.id = data.get("id")
+		o.name = data.get("name", "")
+		o.email = data.get("email")
+		o.phone = data.get("phone")
+		o.timezone = data.get("timezone")
+		# availability entries stored as strings 'HH:MM:SS'
+		avail = []
+		for w in data.get("availability", []):
+			avail.append({"start": _parse_time(w.get("start")), "end": _parse_time(w.get("end"))})
+		o.availability = avail
+		o.preferences = data.get("preferences", {}) or {}
+		o.emergency_contact = data.get("emergency_contact")
+		o.notification_settings = data.get("notification_settings", {}) or {}
+		o.created_at = _parse_dt(data.get("created_at")) or datetime.now(timezone.utc)
+		o.updated_at = _parse_dt(data.get("updated_at")) or datetime.now(timezone.utc)
+		# pets and tasks
+		for p in data.get("pets", []):
+			pet = Pet(
+				id=p.get("id"),
+				name=p.get("name", ""),
+				species=p.get("species", ""),
+				breed=p.get("breed"),
+				sex=p.get("sex"),
+				age=p.get("age"),
+				photo_url=p.get("photo_url"),
+				owner_id=o.id,
+				created_at=_parse_dt(p.get("created_at")) or datetime.now(timezone.utc),
+				updated_at=_parse_dt(p.get("updated_at")) or datetime.now(timezone.utc),
+			)
+			for t in p.get("tasks", []):
+				task = Task(
+					id=t.get("id"),
+					pet_id=t.get("pet_id") or pet.id,
+					title=t.get("title", ""),
+					type=t.get("type", ""),
+					duration_minutes=t.get("duration_minutes", 0),
+					priority=t.get("priority", 0),
+					priority_level=t.get("priority_level", "medium"),
+					recurrence_rule=t.get("recurrence_rule"),
+					earliest_time=_parse_time(t.get("earliest_time")),
+					latest_time=_parse_time(t.get("latest_time")),
+					requires_walker=t.get("requires_walker", False),
+					notes=t.get("notes"),
+					estimated_effort=t.get("estimated_effort"),
+					last_performed=_parse_dt(t.get("last_performed")),
+					active=t.get("active", True),
+					created_at=_parse_dt(t.get("created_at")) or datetime.now(timezone.utc),
+					updated_at=_parse_dt(t.get("updated_at")) or datetime.now(timezone.utc),
+				)
+				pet.tasks.append(task)
+			o.pets.append(pet)
+		return o
+
+	def save_to_json(self, filepath: str = "data.json") -> None:
+		"""Persist owner (including pets and tasks) to a JSON file.
+		Overwrites `filepath` atomically when possible.
+		"""
+		data = self.to_dict()
+		# ensure directory exists
+		_dir = os.path.dirname(os.path.abspath(filepath))
+		if _dir and not os.path.exists(_dir):
+			os.makedirs(_dir, exist_ok=True)
+		# write atomically
+		tmp = filepath + ".tmp"
+		with open(tmp, "w", encoding="utf-8") as f:
+			json.dump(data, f, indent=2)
+		os.replace(tmp, filepath)
+
+	@classmethod
+	def load_from_json(cls, filepath: str = "data.json") -> Optional["Owner"]:
+		"""Load Owner (with pets/tasks) from JSON file. Returns None if file missing.
+		Raises on parse errors.
+		"""
+		if not os.path.exists(filepath):
+			return None
+		with open(filepath, "r", encoding="utf-8") as f:
+			data = json.load(f)
+		return cls.from_dict(data)
+
 
 @dataclass
 class Task:
@@ -165,6 +344,7 @@ class Task:
 	type: str = ""  # e.g., walk, feed, med
 	duration_minutes: int = 0
 	priority: int = 0
+	priority_level: str = "medium"  # one of 'low','medium','high'
 	recurrence_rule: Optional[str] = None
 	earliest_time: Optional[time] = None
 	latest_time: Optional[time] = None
@@ -452,7 +632,18 @@ class Scheduler:
 		tasks = [t for t in owner.get_all_tasks() if t.active and t.is_scheduled_on(on_date)]
 		# dynamic greedy selection using scoring and 1-step lookahead
 		# initial sort is not strictly necessary but keeps ordering stable
-		tasks.sort(key=lambda x: (-x.priority, x.duration_minutes or 0))
+		# sort tasks primarily by priority level (high->low), then by duration
+		def _priority_rank(t: Task) -> int:
+			mapping = {"high": 3, "medium": 2, "low": 1}
+			if getattr(t, "priority_level", None):
+				return mapping.get(t.priority_level.lower(), 2)
+			# fallback to numeric priority if provided
+			try:
+				return int(t.priority) if t.priority else 2
+			except Exception:
+				return 2
+
+		tasks.sort(key=lambda x: (-_priority_rank(x), x.duration_minutes or 0))
 
 		# iterate availability windows
 		for w in owner.availability:
@@ -593,7 +784,13 @@ class Scheduler:
 		score = 0.0
 		# priority weight (normalized)
 		priority_weight = 1.0
-		score += priority_weight * float(task.priority or 0)
+		# derive numeric priority from priority_level (preferred) or numeric priority fallback
+		prio_map = {"high": 3.0, "medium": 2.0, "low": 1.0}
+		if getattr(task, "priority_level", None):
+			priority_val = prio_map.get(task.priority_level.lower(), float(task.priority or 0))
+		else:
+			priority_val = float(task.priority or 0)
+		score += priority_weight * float(priority_val)
 
 		# recency: prefer tasks that haven't been performed recently
 		if task.last_performed:
@@ -618,6 +815,70 @@ class Scheduler:
 				score += 1.0
 
 		return float(score)
+
+	def next_available_slot(self, duration_minutes: int, start_after: Optional[datetime] = None) -> Optional[Dict[str, datetime]]:
+		"""Find the next available time slot on `self.date` that can fit `duration_minutes`.
+
+		Searches the owner's availability windows and current generated schedule (if any)
+		to return a slot dict with `start` and `end` datetimes or `None` when no slot
+		is available on the planned date.
+
+		This is a convenience algorithmic capability beyond the basic planner: it
+		enables 'next available slot' queries useful for quick rescheduling and UI
+	
+actions.
+		"""
+		if duration_minutes <= 0:
+			return None
+		owner: Optional[Owner] = self.run_metadata.get("owner")
+		if owner is None:
+			raise ValueError("Owner instance required in Scheduler.run_metadata['owner']")
+		on_date = self.date or date.today()
+		# collect existing busy ranges from any previously generated schedule entries
+		busy: List[tuple] = []
+		# if a schedule exists in metadata, use its entries
+		extra_schedule: Optional[DailySchedule] = self.run_metadata.get("generated_schedule")
+		if extra_schedule:
+			for e in extra_schedule.entries:
+				if e.scheduled_start and e.scheduled_end:
+					busy.append((e.scheduled_start, e.scheduled_end))
+
+		# helper to check overlap
+		def overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
+			return not (a_end <= b_start or b_end <= a_start)
+
+		req = timedelta(minutes=duration_minutes)
+		# iterate owner availability windows for the date
+		for w in owner.availability:
+			wstart_time: time = w.get("start")
+			wend_time: time = w.get("end")
+			if not wstart_time or not wend_time:
+				continue
+			cursor = datetime.combine(on_date, wstart_time)
+			window_end = datetime.combine(on_date, wend_time)
+			# if start_after provided, move cursor forward
+			if start_after and start_after > cursor:
+				cursor = start_after
+			while cursor + req <= window_end:
+				# check against busy ranges
+				conflict = False
+				for bstart, bend in busy:
+					if overlaps(cursor, cursor + req, bstart, bend):
+						conflict = True
+						# advance cursor to end of this busy range and continue searching
+						cursor = bend
+						break
+				if conflict:
+					# ensure cursor remains within window
+					if cursor >= window_end:
+						break
+					continue
+				# slot is free
+				return {"start": cursor, "end": cursor + req}
+				# advance by a small step (here we jump to end since nothing busy)
+				cursor += timedelta(minutes=1)
+		# no slot found for this availability day
+		return None
 		return conflicts
 
 	def score_task_for_slot(self, task: Task, slot: Dict[str, datetime]) -> float:
@@ -632,7 +893,12 @@ class Scheduler:
 		score = 0.0
 		# priority weight (normalized)
 		priority_weight = 1.0
-		score += priority_weight * float(task.priority or 0)
+		prio_map = {"high": 3.0, "medium": 2.0, "low": 1.0}
+		if getattr(task, "priority_level", None):
+			priority_val = prio_map.get(task.priority_level.lower(), float(task.priority or 0))
+		else:
+			priority_val = float(task.priority or 0)
+		score += priority_weight * float(priority_val)
 
 		# recency: prefer tasks that haven't been performed recently
 		if task.last_performed:
@@ -896,4 +1162,30 @@ class Storage:
 	def backup(self) -> None:
 		"""Perform a backup of the configured backend store."""
 		raise NotImplementedError
+
+	# --- concrete JSON helpers (convenience) -----------------------
+
+	def save_owner(self, owner: Owner, filepath: str = "data.json") -> None:
+		"""Save an Owner object to JSON using Owner.save_to_json and update last_sync."""
+		owner.save_to_json(filepath)
+		self.last_sync = _dt.now()
+
+	def load_owner(self, filepath: str = "data.json") -> Optional[Owner]:
+		"""Load an Owner object from JSON (returns None if not present)."""
+		try:
+			return Owner.load_from_json(filepath)
+		except Exception:
+			# bubble up in other callers if needed
+			raise
+
+	def backup_owner_file(self, filepath: str = "data.json", backups_dir: str = "backups") -> str:
+		"""Make a timestamped backup copy of `filepath` into `backups_dir` and return the backup path."""
+		if not os.path.exists(filepath):
+			raise FileNotFoundError(filepath)
+		if not os.path.exists(backups_dir):
+			os.makedirs(backups_dir, exist_ok=True)
+		stamp = _dt.now().strftime("%Y%m%dT%H%M%S")
+		dest = os.path.join(backups_dir, f"data.{stamp}.json")
+		shutil.copy2(filepath, dest)
+		return dest
 

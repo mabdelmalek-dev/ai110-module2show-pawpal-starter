@@ -5,6 +5,10 @@ import os
 
 from pawpal_system import Owner, Pet, Task, Scheduler, TaskInstance
 from prettytable import PrettyTable
+from tabulate import tabulate
+from colorama import Fore, Style, init as colorama_init
+
+colorama_init()
 
 
 def build_demo_owner_from_dict(data: dict) -> Owner:
@@ -49,14 +53,35 @@ def print_schedule_table(owner: Owner, schedule):
             pid = task.pet_id
             pet = next((p for p in owner.pets if p.id == pid), None)
             pet_name = pet.name if pet else "Unknown"
-        rows.append((start, end, title, pet_name, entry.status))
+        rows.append((start, end, title, pet_name, entry.status, getattr(task, "type", None)))
 
     # simple table print
-    print(f"Today's Schedule for {owner.name} ({schedule.date}):\n")
-    print(f"{'Start':<6} {'End':<6} {'Task':<30} {'Pet':<15} {'Status':<10}")
-    print("-" * 75)
+    # emoji for task types
+    type_emojis = {
+        "walk": "🐕‍🦺",
+        "feed": "🍽️",
+        "med": "💊",
+        "play": "🎾",
+        "groom": "✂️",
+        None: "🐾",
+    }
+    # status emoji and color
+    status_emoji = {"planned": "⏳", "done": "✅", "cancelled": "❌"}
+    status_color = {"planned": Fore.YELLOW, "done": Fore.GREEN, "cancelled": Fore.RED}
+
+    table_rows = []
     for r in rows:
-        print(f"{r[0]:<6} {r[1]:<6} {r[2]:<30} {r[3]:<15} {r[4]:<10}")
+        ttype = (r[5] or "").lower() if r[5] else None
+        emoji = type_emojis.get(ttype, "🐾")
+        status = (r[4] or "planned").lower()
+        color = status_color.get(status, Fore.YELLOW)
+        s_emoji = status_emoji.get(status, "⏳")
+        status_str = f"{color}{s_emoji} {status.title()}{Style.RESET_ALL}"
+        table_rows.append([r[0], r[1], f"{emoji} {r[2]}", r[3], status_str])
+
+    headers = ["Start", "End", "Task", "Pet", "Status"]
+    print(f"Today's Schedule for {owner.name} ({schedule.date}):\n")
+    print(tabulate(table_rows, headers=headers, tablefmt="fancy_grid"))
     print("\n", schedule.summarize())
 
 

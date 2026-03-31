@@ -1,6 +1,7 @@
 import streamlit as st
-from pawpal_system import Owner, Pet, Task, TaskInstance, Scheduler
+from pawpal_system import Owner, Pet, Task, TaskInstance, Scheduler, Storage
 from datetime import date, time
+import os
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -45,6 +46,18 @@ owner_name = st.text_input("Owner name", value="Jordan")
 pet_name = st.text_input("Pet name", value="Mochi")
 species = st.selectbox("Species", ["dog", "cat", "other"])
 
+# Attempt to load persisted owner data on startup
+storage = Storage()
+if "owner" not in st.session_state:
+    try:
+        loaded = storage.load_owner("data.json")
+    except Exception:
+        loaded = None
+    if loaded:
+        st.session_state["owner"] = loaded
+    else:
+        st.session_state["owner"] = Owner(name=owner_name)
+
 # Session helpers
 def get_owner(name: str) -> Owner:
     o = st.session_state.get("owner")
@@ -65,6 +78,11 @@ def find_or_create_pet(owner: Owner, name: str, species: str) -> Pet:
 if st.button("Add pet"):
     owner = get_owner(owner_name)
     pet = find_or_create_pet(owner, pet_name, species)
+    # persist owner -> data.json
+    try:
+        storage.save_owner(owner, "data.json")
+    except Exception as e:
+        st.warning(f"Could not save data: {e}")
     st.success(f"Added pet: {pet.name}")
 
 st.markdown("### Tasks")
@@ -88,9 +106,16 @@ if st.button("Add task"):
     pri_map = {"low": 1, "medium": 2, "high": 3}
     next_id = max((t.id or 0 for t in owner.get_all_tasks()), default=0) + 1
     task = Task(id=next_id, pet_id=pet.id, title=task_title, duration_minutes=int(duration), priority=pri_map.get(priority, 2))
+    # attach human-friendly priority level as well
+    task.priority_level = priority
     pet.add_task(task)
     # also keep UI-friendly task record in session_state for quick table view
     st.session_state.tasks.append({"title": task_title, "duration_minutes": int(duration), "priority": priority})
+    # persist owner -> data.json
+    try:
+        storage.save_owner(owner, "data.json")
+    except Exception as e:
+        st.warning(f"Could not save data: {e}")
     st.success(f"Added task: {task_title} to {pet.name}")
 
 if st.session_state.tasks:
@@ -98,6 +123,22 @@ if st.session_state.tasks:
     st.table(st.session_state.tasks)
 else:
     st.info("No tasks yet. Add one above.")
+
+# Save now button for explicit persistence
+if st.button("Save now"):
+    owner = get_owner(owner_name)
+    try:
+        # create a backup first
+        try:
+            backup_path = storage.backup_owner_file("data.json")
+            st.info(f"Backup created: {backup_path}")
+        except FileNotFoundError:
+            # no existing file to backup
+            pass
+        storage.save_owner(owner, "data.json")
+        st.success("Saved owner data to data.json")
+    except Exception as e:
+        st.error(f"Save failed: {e}")
 
 st.divider()
 
@@ -133,7 +174,7 @@ if st.button("Generate schedule"):
         exists = any((tt.title == t.get("title") and tt.duration_minutes == int(t.get("duration_minutes", 0))) for tt in pet.get_tasks())
         if exists:
             continue
-        task = Task(id=next_id, pet_id=pet.id, title=t.get("title", ""), duration_minutes=int(t.get("duration_minutes", 0)), priority=pri_map.get(t.get("priority", "medium"), 2))
+        task = Task(id=next_id, pet_id=pet.id, title=t.get("title", ""), duration_minutes=int(t.get("duration_minutes", 0)), priority=pri_map.get(t.get("priority", "medium"), 2), priority_level=t.get("priority", "medium"))
         pet.add_task(task)
         next_id += 1
 
@@ -169,17 +210,51 @@ if st.button("Generate schedule"):
         # Present a sorted table (by scheduled_start) for clarity
         sorted_entries = sched.sort_by_time(plan.get_today_tasks(), "scheduled_start")
         id_to_title = {t.id: t.title for t in owner.get_all_tasks()}
+        id_to_priority = {t.id: getattr(t, "priority_level", "medium") for t in owner.get_all_tasks()}
         rows = []
         for e in sorted_entries:
+            # emoji mapping
+            em = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+            plev = id_to_priority.get(e.task_id, "medium")
+            emoji = em.get(plev.lower(), "🟡")
             rows.append({
                 "task_id": e.task_id,
-                "title": id_to_title.get(e.task_id, "(unknown)"),
+                "title": f"{emoji} {id_to_title.get(e.task_id, "(unknown)")}",
                 "start": e.scheduled_start,
                 "end": e.scheduled_end,
+                "priority": plev.title(),
                 "status": e.status,
             })
 
         if rows:
-            st.table(rows)
+            # Render a color-coded HTML table for better readability
+            def _render_html_table(rows):
+                # priority colors
+                color_map = {"high": "#ffd6d6", "medium": "#fff4cc", "low": "#ddffdd"}
+                html = ["<table style='border-collapse:collapse;width:100%'>"]
+                # headers
+                html.append("<tr>")
+                for h in ["Task", "Start", "End", "Priority", "Status"]:
+                    html.append(f"<th style='text-align:left;padding:8px;border-bottom:1px solid #ddd'>{h}</th>")
+                html.append("</tr>")
+                for r in rows:
+                    # r: dict with title, start, end, priority, status
+                    p = (r.get("priority") or "medium").lower()
+                    bg = color_map.get(p, "#fff4cc")
+                    title = r.get("title")
+                    start = r.get("start") or "--:--"
+                    end = r.get("end") or "--:--"
+                    status = r.get("status") or "planned"
+                    html.append(f"<tr style='background:{bg}'>")
+                    html.append(f"<td style='padding:8px;border-bottom:1px solid #eee'>{title}</td>")
+                    html.append(f"<td style='padding:8px;border-bottom:1px solid #eee'>{start}</td>")
+                    html.append(f"<td style='padding:8px;border-bottom:1px solid #eee'>{end}</td>")
+                    html.append(f"<td style='padding:8px;border-bottom:1px solid #eee'>{p.title()}</td>")
+                    html.append(f"<td style='padding:8px;border-bottom:1px solid #eee'>{status}</td>")
+                    html.append("</tr>")
+                html.append("</table>")
+                return "".join(html)
+
+            st.markdown(_render_html_table(rows), unsafe_allow_html=True)
         else:
             st.info("No tasks fit into availability for today.")
